@@ -532,12 +532,15 @@ Examples:
             print_error(f"Failed to load mesh: {e}")
             return 1
 
+        # Determine building name for export metadata
+        export_building_name = location["name"]
+
         # Isolate specific building if requested
         if building_to_isolate is not None:
             building_names = get_building_names(metadata)
             if building_to_isolate < len(building_names):
-                building_name = building_names[building_to_isolate]
-                print_status(f"Isolating building: {building_name}")
+                export_building_name = building_names[building_to_isolate]
+                print_status(f"Isolating building: {export_building_name}")
             else:
                 print_status(f"Isolating building at index: {building_to_isolate}")
 
@@ -588,7 +591,9 @@ Examples:
                 transient=True,
             ) as progress:
                 progress.add_task("Writing file...", total=None)
-                output_path = export_mesh(mesh, args.output, args.format)
+                output_path = export_mesh(
+                    mesh, args.output, args.format, building_name=export_building_name
+                )
             export_info = get_export_info(output_path)
             print_success(f"Exported: {output_path}")
             print_status(f"File size: {export_info['size_human']}")
