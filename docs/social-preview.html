@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1200, height=630">
+  <title>OneMap Slicer - Social Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 1200px;
+      height: 630px;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Grid pattern overlay */
+    .grid-pattern {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-image:
+        linear-gradient(rgba(59, 130, 246, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(59, 130, 246, 0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+    }
+
+    /* Skyline silhouette */
+    .skyline {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 280px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 60px;
+      opacity: 0.15;
+    }
+
+    .building {
+      background: linear-gradient(180deg, #3b82f6 0%, #1d4ed8 100%);
+      border-radius: 4px 4px 0 0;
+      flex-shrink: 0;
+    }
+
+    /* Marina Bay Sands inspired shape */
+    .mbs-container {
+      position: absolute;
+      bottom: 80px;
+      right: 100px;
+      display: flex;
+      gap: 12px;
+      opacity: 0.25;
+    }
+
+    .mbs-tower {
+      width: 40px;
+      height: 200px;
+      background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
+      border-radius: 4px 4px 0 0;
+    }
+
+    .mbs-deck {
+      position: absolute;
+      top: -20px;
+      left: -30px;
+      right: -30px;
+      height: 30px;
+      background: linear-gradient(90deg, #3b82f6 0%, #60a5fa 50%, #3b82f6 100%);
+      border-radius: 60px 60px 0 0;
+    }
+
+    /* Main content */
+    .content {
+      position: relative;
+      z-index: 10;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 60px 80px;
+    }
+
+    /* Logo/Icon area */
+    .icon-container {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+
+    .icon {
+      width: 80px;
+      height: 80px;
+      background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 20px 40px rgba(59, 130, 246, 0.3);
+    }
+
+    /* 3D cube/building icon */
+    .icon svg {
+      width: 48px;
+      height: 48px;
+    }
+
+    h1 {
+      font-size: 72px;
+      font-weight: 800;
+      color: #f8fafc;
+      letter-spacing: -2px;
+      line-height: 1;
+      margin-bottom: 20px;
+    }
+
+    .tagline {
+      font-size: 32px;
+      font-weight: 400;
+      color: #94a3b8;
+      line-height: 1.4;
+      max-width: 700px;
+    }
+
+    .tagline strong {
+      color: #60a5fa;
+      font-weight: 600;
+    }
+
+    /* Feature badges */
+    .badges {
+      display: flex;
+      gap: 16px;
+      margin-top: 40px;
+    }
+
+    .badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(59, 130, 246, 0.1);
+      border: 1px solid rgba(59, 130, 246, 0.2);
+      padding: 12px 20px;
+      border-radius: 100px;
+      color: #94a3b8;
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .badge svg {
+      width: 20px;
+      height: 20px;
+      color: #60a5fa;
+    }
+
+    /* Singapore flag colors accent */
+    .accent-bar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 6px;
+      display: flex;
+    }
+
+    .accent-bar .red {
+      flex: 1;
+      background: #ef4444;
+    }
+
+    .accent-bar .white {
+      flex: 1;
+      background: #f8fafc;
+    }
+
+    /* GitHub corner */
+    .github-badge {
+      position: absolute;
+      top: 40px;
+      right: 60px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 10px 20px;
+      border-radius: 100px;
+      color: #94a3b8;
+      font-size: 16px;
+      font-weight: 500;
+    }
+
+    .github-badge svg {
+      width: 24px;
+      height: 24px;
+    }
+
+    /* Floating 3D elements */
+    .float-element {
+      position: absolute;
+      opacity: 0.1;
+    }
+
+    .float-1 {
+      top: 100px;
+      right: 300px;
+      width: 120px;
+      height: 120px;
+      border: 3px solid #3b82f6;
+      border-radius: 20px;
+      transform: rotate(15deg);
+    }
+
+    .float-2 {
+      bottom: 200px;
+      left: 700px;
+      width: 80px;
+      height: 80px;
+      background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
+      border-radius: 16px;
+      transform: rotate(-10deg);
+    }
+
+    .disclaimer {
+      position: absolute;
+      bottom: 20px;
+      left: 80px;
+      font-size: 14px;
+      color: #64748b;
+      font-weight: 500;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <div class="grid-pattern"></div>
+
+  <!-- Floating decorative elements -->
+  <div class="float-element float-1"></div>
+  <div class="float-element float-2"></div>
+
+  <!-- Skyline silhouette -->
+  <div class="skyline">
+    <div class="building" style="width: 30px; height: 80px;"></div>
+    <div class="building" style="width: 25px; height: 120px;"></div>
+    <div class="building" style="width: 35px; height: 100px;"></div>
+    <div class="building" style="width: 20px; height: 150px;"></div>
+    <div class="building" style="width: 40px; height: 90px;"></div>
+    <div class="building" style="width: 28px; height: 180px;"></div>
+    <div class="building" style="width: 22px; height: 130px;"></div>
+    <div class="building" style="width: 45px; height: 200px;"></div>
+    <div class="building" style="width: 30px; height: 160px;"></div>
+    <div class="building" style="width: 35px; height: 110px;"></div>
+    <div class="building" style="width: 25px; height: 140px;"></div>
+    <div class="building" style="width: 38px; height: 170px;"></div>
+    <div class="building" style="width: 28px; height: 95px;"></div>
+    <div class="building" style="width: 32px; height: 125px;"></div>
+    <div class="building" style="width: 24px; height: 85px;"></div>
+  </div>
+
+  <!-- MBS inspired silhouette -->
+  <div class="mbs-container">
+    <div class="mbs-tower"></div>
+    <div class="mbs-tower"></div>
+    <div class="mbs-tower"></div>
+    <div class="mbs-deck"></div>
+  </div>
+
+  <div class="content">
+    <div class="icon-container">
+      <div class="icon">
+        <!-- 3D building/cube icon -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+          <path d="M2 17l10 5 10-5"/>
+          <path d="M2 12l10 5 10-5"/>
+        </svg>
+      </div>
+    </div>
+
+    <h1>OneMap Slicer</h1>
+
+    <p class="tagline">
+      Extract <strong>3D building models</strong> from Singapore<br>
+      and export them for <strong>3D printing</strong>
+    </p>
+
+    <div class="badges">
+      <div class="badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+        </svg>
+        3MF / STL Export
+      </div>
+      <div class="badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/>
+          <path d="m21 21-4.35-4.35"/>
+        </svg>
+        Search by Name
+      </div>
+      <div class="badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z"/>
+          <circle cx="12" cy="10" r="3"/>
+        </svg>
+        Open Data
+      </div>
+    </div>
+  </div>
+
+  <div class="github-badge">
+    <svg viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+    </svg>
+    Open Source
+  </div>
+
+  <div class="disclaimer">
+    Not an official tool. Made by a hobbyist.
+  </div>
+
+  <div class="accent-bar">
+    <div class="red"></div>
+    <div class="white"></div>
+  </div>
+</body>
+</html>
