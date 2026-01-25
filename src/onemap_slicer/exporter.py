@@ -19,9 +19,10 @@ def _inject_3mf_metadata(
     building_name: str | None = None,
 ) -> None:
     """
-    Inject attribution metadata into a 3MF file.
+    Inject attribution metadata and object names into a 3MF file.
 
-    3MF is a ZIP containing XML. We modify 3D/3dmodel.model to add metadata.
+    3MF is a ZIP containing XML. We modify 3D/3dmodel.model to add metadata
+    and set object names so they appear correctly in slicers.
     """
     # 3MF namespace
     ns = {"m": "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"}
@@ -68,6 +69,14 @@ def _inject_3mf_metadata(
         meta_elem = ET.Element("metadata", {"name": name})
         meta_elem.text = value
         root.insert(0, meta_elem)
+
+    # Set object names so they appear correctly in slicers like Bambu Studio
+    # The 'name' attribute on <object> elements is what slicers display
+    object_name = building_name or title or "Building"
+    resources = root.find("m:resources", ns)
+    if resources is not None:
+        for obj in resources.findall("m:object", ns):
+            obj.set("name", object_name)
 
     # Write back the modified 3MF
     modified_xml = ET.tostring(root, encoding="unicode", xml_declaration=True)

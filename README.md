@@ -11,7 +11,7 @@ OneMap Slicer searches Singapore's [OneMap](https://www.onemap.gov.sg/) database
 - Export individual buildings from multi-building tiles
 - Automatic mesh repair for watertight prints
 - Configurable scale (default 1:1000)
-- 3MF format with embedded attribution metadata
+- 3MF export with building names and attribution metadata
 
 ## Requirements
 
@@ -160,14 +160,6 @@ onemap-slicer "Marina Bay Sands" --scale 1:2000 -o mbs-small.3mf
 onemap-slicer "Marina Bay Sands" --scale 0.002 -o mbs.3mf
 ```
 
-### Export as STL
-
-Use STL format instead of 3MF:
-
-```bash
-onemap-slicer "Marina Bay Sands" --format stl -o mbs.stl
-```
-
 ### Non-Interactive Mode
 
 For scripts or automation, disable interactive prompts:
@@ -214,6 +206,10 @@ Try different search terms:
 - Try the street address
 - Use the 6-digit postal code
 
+### Large complex is incomplete
+
+Large developments like Marina Bay Sands span multiple 3D tiles. Currently, the tool exports only the tile at the searched coordinates, so you may get partial buildings or only some towers. Multi-tile export is planned for a future release.
+
 ### Mesh has holes or issues
 
 Some source models may have geometry issues. Try:
@@ -243,7 +239,9 @@ Delete this folder to clear the cache.
 
 ## Tips for 3D Printing
 
-1. **Scale selection**: At 1:1000 scale, a 200m tall building becomes 200mm (about 8 inches)
+1. **Use 3MF format**: Building names appear in your slicer, making it easy to identify models
+
+2. **Scale selection**: At 1:1000 scale, a 200m tall building becomes 200mm (about 8 inches)
 
 2. **Supports**: Most buildings will need supports for overhangs
 
@@ -260,6 +258,16 @@ Models exported by this tool contain attribution metadata crediting:
 - OneMap Singapore
 
 Please retain attribution when sharing or publishing printed models.
+
+## STL Export (Legacy)
+
+STL is supported for compatibility with older slicers that don't support 3MF. However, STL is a limited format that cannot store building names or rich metadata.
+
+```bash
+onemap-slicer "Marina Bay Sands" --format stl -o mbs.stl
+```
+
+If your slicer supports 3MF (Bambu Studio, PrusaSlicer, Cura, etc.), use 3MF instead.
 
 ## License
 
