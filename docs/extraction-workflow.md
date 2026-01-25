@@ -390,3 +390,311 @@ Use `trimesh.repair.fill_holes()` or Blender's "Make Manifold" feature before pr
 
 ### Scale issues
 OneMap uses real-world meters. Apply appropriate scale factor (e.g., 1:1000) for printing.
+
+## Advanced: Multi-Tile Building Extraction
+
+Some building complexes (like Suntec City) span multiple tiles. This section documents how to extract and combine buildings from different tiles.
+
+### The Problem
+
+Large building complexes may be split across tile boundaries. For example, Suntec City's 5 towers are distributed across 2 different tiles:
+
+| Tile | Buildings |
+|------|-----------|
+| Tile 1 (search: "Suntec City") | Tower One, Tower Five |
+| Tile 2 (search: "Suntec Tower Two") | Tower Two, Tower Three, Tower Four |
+
+### Solution: Extract by gml:id
+
+Each building in a tile has a unique `gml:id` in the batch table metadata. This ID appears in the GLB geometry names, allowing us to extract specific buildings.
+
+#### Step 1: Identify Building IDs
+
+First, get the `gml:id` for each target building from the batch table:
+
+```python
+from onemap_slicer.onemap_api import search_buildings, load_tileset, find_tiles, get_tile_data
+from onemap_slicer.b3dm_parser import parse_header, extract_metadata, get_building_names
+
+def get_building_ids(query, result_index=0):
+    """Get gml:id for all buildings in a tile."""
+    results = search_buildings(query)
+    location = results[result_index]
+
+    tileset = load_tileset()
+    tiles = find_tiles(tileset, location['lat'], location['lng'])
+    tile_data = get_tile_data(tiles[0]['uri'])
+
+    header = parse_header(tile_data)
+    metadata = extract_metadata(tile_data, header)
+    batch_table = metadata.get('batch_table', {})
+
+    names = get_building_names(metadata)
+    gml_ids = batch_table.get('gml:id', [])
+
+    return list(zip(names, gml_ids))
+
+# Example: Find Suntec towers in each tile
+print("Tile 1 (Suntec City):")
+for name, gml_id in get_building_ids("Suntec City", result_index=1):
+    if name and 'SUNTEC' in name.upper():
+        print(f"  {name}: {gml_id}")
+
+print("\nTile 2 (Suntec Tower Two):")
+for name, gml_id in get_building_ids("Suntec Tower Two", result_index=0):
+    if name and 'SUNTEC' in name.upper():
+        print(f"  {name}: {gml_id}")
+```
+
+Output:
+```
+Tile 1 (Suntec City):
+  SUNTEC TOWER ONE: SLA_BLDG2_04d573f1-aed4-471d-bfa4-759ecdec771b
+  SUNTEC TOWER FIVE: SLA_BLDG2_1a2bd984-a7d6-4a5a-b553-db591b97b36b
+
+Tile 2 (Suntec Tower Two):
+  SUNTEC TOWER TWO: SLA_BLDG2_e8d3e6df-4f2f-4be4-9adb-2e7c5e958b77
+  SUNTEC TOWER THREE: SLA_BLDG2_da2bc05d-fea0-4a97-a1fa-42711a3b7f20
+  SUNTEC TOWER FOUR: SLA_BLDG2_bdf8a43d-df18-4111-a7a8-55e83260fd96
+```
+
+#### Step 2: Extract Buildings by gml:id
+
+The `gml:id` appears in GLB geometry names (e.g., `Batched_Building_SLA_BLDG2_04d573f1-...Mesh`). Filter geometries by matching these IDs:
+
+```python
+import trimesh
+import tempfile
+import os
+import numpy as np
+
+from onemap_slicer.b3dm_parser import parse_header, extract_glb
+from onemap_slicer.mesh_processor import decompress_draco
+
+def extract_buildings_by_id(query, result_index, target_gml_ids):
+    """Extract specific buildings from a tile by their gml:id."""
+    results = search_buildings(query)
+    location = results[result_index]
+
+    tileset = load_tileset()
+    tiles = find_tiles(tileset, location['lat'], location['lng'])
+    tile_data = get_tile_data(tiles[0]['uri'])
+
+    header = parse_header(tile_data)
+    glb_data = extract_glb(tile_data, header)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        glb_path = os.path.join(tmpdir, "tile.glb")
+        decompressed_path = os.path.join(tmpdir, "tile_decompressed.glb")
+
+        with open(glb_path, 'wb') as f:
+            f.write(glb_data)
+
+        result_path = decompress_draco(glb_path, decompressed_path)
+        scene = trimesh.load(result_path)
+
+        extracted = []
+        for geom_name, geom in scene.geometry.items():
+            for gml_id in target_gml_ids:
+                if gml_id in geom_name:
+                    extracted.append(geom)
+                    break
+
+        return extracted
+```
+
+#### Step 3: Combine and Export
+
+```python
+# Define target buildings
+suntec_tower_ids = {
+    # Tile 1
+    "SLA_BLDG2_04d573f1-aed4-471d-bfa4-759ecdec771b",  # Tower One
+    "SLA_BLDG2_1a2bd984-a7d6-4a5a-b553-db591b97b36b",  # Tower Five
+    # Tile 2
+    "SLA_BLDG2_e8d3e6df-4f2f-4be4-9adb-2e7c5e958b77",  # Tower Two
+    "SLA_BLDG2_da2bc05d-fea0-4a97-a1fa-42711a3b7f20",  # Tower Three
+    "SLA_BLDG2_bdf8a43d-df18-4111-a7a8-55e83260fd96",  # Tower Four
+}
+
+# Extract from both tiles
+all_meshes = []
+all_meshes.extend(extract_buildings_by_id("Suntec City", 1, suntec_tower_ids))
+all_meshes.extend(extract_buildings_by_id("Suntec Tower Two", 0, suntec_tower_ids))
+
+# Combine meshes
+combined = trimesh.util.concatenate(all_meshes)
+
+# Prepare for printing (scale 1:1000, center on build plate)
+scale = 0.001
+combined.apply_scale(scale)
+
+bounds = combined.bounds
+center_xy = (bounds[0][:2] + bounds[1][:2]) / 2
+min_z = bounds[0][2]
+combined.apply_translation([-center_xy[0], -center_xy[1], -min_z])
+
+# Export
+combined.export("suntec_5_towers.3mf")
+```
+
+### Complete Multi-Tile Extraction Script
+
+```python
+#!/usr/bin/env python3
+"""
+Extract buildings spanning multiple tiles.
+
+Example: Extract all 5 Suntec City towers.
+"""
+
+import tempfile
+import os
+import trimesh
+import numpy as np
+
+from onemap_slicer.onemap_api import search_buildings, load_tileset, find_tiles, get_tile_data
+from onemap_slicer.b3dm_parser import parse_header, extract_glb, extract_metadata, get_building_names
+from onemap_slicer.mesh_processor import decompress_draco
+
+
+def find_building_gml_ids(query, result_index, name_filter):
+    """Find gml:ids for buildings matching a name filter."""
+    results = search_buildings(query)
+    location = results[result_index]
+
+    tileset = load_tileset()
+    tiles = find_tiles(tileset, location['lat'], location['lng'])
+    tile_data = get_tile_data(tiles[0]['uri'])
+
+    header = parse_header(tile_data)
+    metadata = extract_metadata(tile_data, header)
+    batch_table = metadata.get('batch_table', {})
+
+    names = get_building_names(metadata)
+    gml_ids = batch_table.get('gml:id', [])
+
+    matching = {}
+    for i, name in enumerate(names):
+        if name and name_filter(name) and i < len(gml_ids):
+            matching[gml_ids[i]] = name
+
+    return matching
+
+
+def extract_meshes_by_gml_id(query, result_index, target_ids):
+    """Extract geometries matching target gml:ids."""
+    results = search_buildings(query)
+    location = results[result_index]
+
+    tileset = load_tileset()
+    tiles = find_tiles(tileset, location['lat'], location['lng'])
+    tile_data = get_tile_data(tiles[0]['uri'])
+
+    header = parse_header(tile_data)
+    glb_data = extract_glb(tile_data, header)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        glb_path = os.path.join(tmpdir, "tile.glb")
+        decompressed_path = os.path.join(tmpdir, "decompressed.glb")
+
+        with open(glb_path, 'wb') as f:
+            f.write(glb_data)
+
+        result_path = decompress_draco(glb_path, decompressed_path)
+        scene = trimesh.load(result_path)
+
+        meshes = []
+        for geom_name, geom in scene.geometry.items():
+            for gml_id, building_name in target_ids.items():
+                if gml_id in geom_name:
+                    print(f"  Extracted: {building_name}")
+                    meshes.append(geom)
+                    break
+
+        return meshes
+
+
+def extract_multi_tile_complex(tile_configs, output_path, scale=0.001):
+    """
+    Extract buildings from multiple tiles and combine.
+
+    Args:
+        tile_configs: List of (query, result_index, gml_ids_dict) tuples
+        output_path: Output 3MF/STL path
+        scale: Scale factor (default 1:1000)
+    """
+    all_meshes = []
+
+    for query, result_index, target_ids in tile_configs:
+        print(f"\nProcessing: {query}")
+        meshes = extract_meshes_by_gml_id(query, result_index, target_ids)
+        all_meshes.extend(meshes)
+
+    if not all_meshes:
+        raise ValueError("No meshes extracted")
+
+    # Combine
+    combined = trimesh.util.concatenate(all_meshes)
+    print(f"\nCombined: {len(combined.vertices)} vertices, {len(combined.faces)} faces")
+
+    # Scale
+    combined.apply_scale(scale)
+
+    # Center on XY, place on Z=0
+    bounds = combined.bounds
+    center_xy = (bounds[0][:2] + bounds[1][:2]) / 2
+    min_z = bounds[0][2]
+    combined.apply_translation(np.array([-center_xy[0], -center_xy[1], -min_z]))
+
+    # Export
+    combined.export(output_path)
+    print(f"\nExported: {output_path}")
+
+    return combined
+
+
+if __name__ == "__main__":
+    # Example: Extract all 5 Suntec City towers
+
+    # First, find the gml:ids for Suntec towers in each tile
+    tile1_towers = find_building_gml_ids(
+        "Suntec City", 1,
+        lambda name: 'SUNTEC TOWER' in name.upper()
+    )
+
+    tile2_towers = find_building_gml_ids(
+        "Suntec Tower Two", 0,
+        lambda name: 'SUNTEC TOWER' in name.upper()
+    )
+
+    print("Towers found:")
+    for gml_id, name in {**tile1_towers, **tile2_towers}.items():
+        print(f"  {name}: {gml_id}")
+
+    # Extract and combine
+    extract_multi_tile_complex(
+        tile_configs=[
+            ("Suntec City", 1, tile1_towers),
+            ("Suntec Tower Two", 0, tile2_towers),
+        ],
+        output_path="suntec_5_towers.3mf",
+        scale=0.001  # 1:1000
+    )
+```
+
+### Why _BATCHID Isolation Doesn't Work
+
+The `isolate_building()` function in `mesh_processor.py` attempts to filter by `_BATCHID` vertex attribute. However, trimesh doesn't preserve this attribute when loading GLB files. The geometry-name-based approach above is more reliable.
+
+### Other Multi-Building Complexes
+
+This technique works for any building complex spanning multiple tiles:
+
+| Complex | Tiles to Search |
+|---------|-----------------|
+| Suntec City (5 towers) | "Suntec City", "Suntec Tower Two" |
+| Marina Bay Financial Centre | "MBFC Tower 1", "MBFC Tower 2", "MBFC Tower 3" |
+| Raffles City | "Raffles City Tower", "Swissotel The Stamford" |
+
+Use `--list` to discover buildings in each tile, then extract by `gml:id`.

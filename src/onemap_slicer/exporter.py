@@ -33,9 +33,7 @@ def _inject_3mf_metadata(
             return  # Not a standard 3MF structure
 
         model_xml = zf.read(model_path)
-        other_files = {
-            name: zf.read(name) for name in zf.namelist() if name != model_path
-        }
+        other_files = {name: zf.read(name) for name in zf.namelist() if name != model_path}
 
     # Parse and modify the XML
     ET.register_namespace("", ns["m"])
@@ -45,7 +43,14 @@ def _inject_3mf_metadata(
     # Remove existing metadata with same names to avoid duplicates
     for meta in root.findall("m:metadata", ns):
         name = meta.get("name", "")
-        if name in ["Title", "Designer", "Description", "Copyright", "LicenseTerms", "CreationDate"]:
+        if name in [
+            "Title",
+            "Designer",
+            "Description",
+            "Copyright",
+            "LicenseTerms",
+            "CreationDate",
+        ]:
             root.remove(meta)
 
     # Add our metadata at the beginning (after any existing processing instructions)
