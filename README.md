@@ -18,19 +18,13 @@ OneMap Slicer searches Singapore's [OneMap](https://www.onemap.gov.sg/) database
 - **Python 3.10 or newer**
 - **Node.js 18 or newer** (for mesh decompression)
 
-## Installation
+<details>
+<summary>Installing Python and Node.js</summary>
 
 ### macOS
 
 ```bash
-# Install Python (if needed)
-brew install python
-
-# Install Node.js (if needed)
-brew install node
-
-# Install onemap-slicer
-pip install onemap-slicer
+brew install python node
 ```
 
 ### Windows
@@ -41,38 +35,35 @@ pip install onemap-slicer
 2. **Install Node.js** from [nodejs.org](https://nodejs.org/)
    - Use the LTS version
 
-3. **Install onemap-slicer**
-   ```powershell
-   pip install onemap-slicer
-   ```
-
 ### Linux (Ubuntu/Debian)
 
 ```bash
-# Install Python and pip
 sudo apt update
 sudo apt install python3 python3-pip
 
 # Install Node.js
 curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
 sudo apt install nodejs
-
-# Install onemap-slicer
-pip install onemap-slicer
 ```
 
 ### Linux (Fedora)
 
 ```bash
 sudo dnf install python3 python3-pip nodejs
-pip install onemap-slicer
 ```
 
 ### Linux (Arch)
 
 ```bash
 sudo pacman -S python python-pip nodejs npm
-pip install onemap-slicer
+```
+
+</details>
+
+## Installation
+
+```bash
+pip install git+https://github.com/aniruddha-adhikary/onemap-slicer.git
 ```
 
 ## Quick Start
@@ -219,9 +210,9 @@ Some source models may have geometry issues. Try:
 
 ### Permission denied when installing
 
-**Linux/macOS**: Use `pip install --user onemap-slicer` or set up a virtual environment.
+**Linux/macOS**: Use `pip install --user git+https://github.com/aniruddha-adhikary/onemap-slicer.git` or set up a virtual environment.
 
-**Windows**: Run PowerShell as Administrator, or use `pip install --user onemap-slicer`.
+**Windows**: Run PowerShell as Administrator, or use `pip install --user git+https://github.com/aniruddha-adhikary/onemap-slicer.git`.
 
 ### Slow first run
 
@@ -276,4 +267,4 @@ MIT License. See [LICENSE](LICENSE) for details.
 ## Links
 
 - [OneMap Singapore](https://www.onemap.gov.sg/)
-- [Report Issues](https://github.com/aniruddha/onemap-slicer/issues)
+- [Report Issues](https://github.com/aniruddha-adhikary/onemap-slicer/issues)
