@@ -4,6 +4,8 @@ Extract 3D building models from Singapore and export them as print-ready files f
 
 OneMap Slicer searches Singapore's [OneMap](https://www.onemap.gov.sg/) database, downloads 3D building models, and converts them to 3MF or STL files ready for slicing in Bambu Studio, PrusaSlicer, Cura, or any other slicer software.
 
+![Demo](./docs/demo.gif)
+
 ## Features
 
 - Search buildings by name, address, or postal code
