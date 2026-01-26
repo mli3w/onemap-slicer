@@ -206,7 +206,144 @@ def repair_mesh(mesh):
     return mesh
 
 
-def prepare_for_print(mesh, scale: float = 0.001, center: bool = True):
+def has_visual_data(mesh) -> bool:
+    """
+    Check if mesh has textures or vertex colors.
+
+    Args:
+        mesh: trimesh object
+
+    Returns:
+        True if mesh has meaningful visual data (textures or non-default vertex colors).
+    """
+    import trimesh
+
+    if not isinstance(mesh, trimesh.Trimesh):
+        return False
+
+    if not hasattr(mesh, "visual") or mesh.visual is None:
+        return False
+
+    visual = mesh.visual
+
+    # Check for TextureVisuals (has material or texture)
+    if isinstance(visual, trimesh.visual.TextureVisuals):
+        # Has texture image
+        if hasattr(visual, "image") and visual.image is not None:
+            return True
+        # Has material with color
+        return hasattr(visual, "material") and visual.material is not None
+
+    # Check for ColorVisuals (has non-default vertex colors)
+    if isinstance(visual, trimesh.visual.ColorVisuals):
+        if hasattr(visual, "vertex_colors") and visual.vertex_colors is not None:
+            colors = visual.vertex_colors
+            if len(colors) > 0:
+                unique_colors = np.unique(colors.reshape(-1, 4), axis=0)
+                # Multiple different colors means real visual data
+                if len(unique_colors) > 1:
+                    return True
+                # Single color - check if it's not a default gray
+                # Trimesh defaults: [102, 102, 102, 255] (gray) or [200, 200, 200, 255] (light gray)
+                if len(unique_colors) == 1:
+                    c = unique_colors[0]
+                    # Default grays have equal R, G, B values
+                    is_gray = c[0] == c[1] == c[2]
+                    # Common defaults: 102 (trimesh default), 200, 255 (white)
+                    is_default = is_gray and c[0] in (102, 200, 255)
+                    if not is_default:
+                        return True
+        return False
+
+    return False
+
+
+def bake_vertex_colors(mesh):
+    """
+    Convert TextureVisuals to vertex colors using mesh.visual.to_color().
+
+    This samples the texture at UV coordinates to produce per-vertex RGBA colors.
+
+    Args:
+        mesh: trimesh object with TextureVisuals
+
+    Returns:
+        trimesh object with ColorVisuals (vertex colors).
+    """
+    import trimesh
+
+    if not isinstance(mesh, trimesh.Trimesh):
+        return mesh
+
+    if not hasattr(mesh, "visual") or mesh.visual is None:
+        return mesh
+
+    # If already ColorVisuals, return as-is
+    if isinstance(mesh.visual, trimesh.visual.ColorVisuals):
+        return mesh
+
+    # Convert TextureVisuals to ColorVisuals
+    if isinstance(mesh.visual, trimesh.visual.TextureVisuals):
+        try:
+            # to_color() samples texture at UV coordinates
+            mesh.visual = mesh.visual.to_color()
+        except Exception:
+            # If conversion fails, just return original
+            pass
+
+    return mesh
+
+
+def lightweight_repair(mesh):
+    """
+    Repair mesh using trimesh's built-in methods that preserve visual data.
+
+    Unlike pymeshfix, these methods preserve vertex attributes like colors.
+
+    Args:
+        mesh: Input trimesh object
+
+    Returns:
+        Repaired trimesh object with visual data intact.
+    """
+    import trimesh
+
+    if not isinstance(mesh, trimesh.Trimesh):
+        return mesh
+
+    try:
+        mesh.fix_normals()
+    except Exception:
+        pass
+
+    try:
+        mesh.fill_holes()
+    except Exception:
+        pass
+
+    try:
+        # Remove degenerate faces (faces with < 3 unique vertices)
+        mesh.update_faces(mesh.nondegenerate_faces())
+    except Exception:
+        pass
+
+    try:
+        # Remove duplicate faces
+        mesh.update_faces(mesh.unique_faces())
+    except Exception:
+        pass
+
+    try:
+        mesh.remove_unreferenced_vertices()
+    except Exception:
+        pass
+
+    return mesh
+
+
+def prepare_for_print(
+    mesh, scale: float = 0.001, center: bool = True, preserve_colors: bool = False
+):
     """
     Prepare mesh for 3D printing.
 
@@ -214,6 +351,8 @@ def prepare_for_print(mesh, scale: float = 0.001, center: bool = True):
         mesh: Input trimesh object
         scale: Scale factor (default 0.001 converts meters to mm at 1:1000)
         center: Whether to center the mesh at origin
+        preserve_colors: If True, use lightweight repair to preserve vertex colors.
+                        If False (default), use pymeshfix for robust watertight repair.
 
     Returns:
         Processed trimesh ready for export.
@@ -226,8 +365,9 @@ def prepare_for_print(mesh, scale: float = 0.001, center: bool = True):
     # Make a copy to avoid modifying original
     mesh = mesh.copy()
 
-    # Use pymeshfix for robust repair
-    mesh = repair_mesh(mesh)
+    # Choose repair method based on whether we need to preserve colors
+    # lightweight_repair preserves vertex attributes; repair_mesh uses pymeshfix (discards colors)
+    mesh = lightweight_repair(mesh) if preserve_colors else repair_mesh(mesh)
 
     # Apply scale
     mesh.apply_scale(scale)

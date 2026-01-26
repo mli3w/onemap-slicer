@@ -14,6 +14,7 @@ OneMap Slicer searches Singapore's [OneMap](https://www.onemap.gov.sg/) database
 - Automatic mesh repair for watertight prints
 - Configurable scale (default 1:1000)
 - 3MF export with building names and attribution metadata
+- Color export: PLY with vertex colors, GLB with textures
 
 ## Requirements
 
@@ -170,9 +171,10 @@ onemap-slicer QUERY [OPTIONS]
 | Option | Description |
 |--------|-------------|
 | `-o, --output FILE` | Output file path (default: building.3mf) |
-| `-f, --format FORMAT` | Output format: `3mf` or `stl` (default: 3mf) |
+| `-f, --format FORMAT` | Output format: `3mf`, `stl`, `ply`, `glb` (default: 3mf) |
 | `-s, --scale SCALE` | Scale as ratio (1:1000) or decimal (0.001) |
 | `--lod LEVEL` | Detail level: `low`, `medium`, `high` (default: high) |
+| `--with-colors` | Preserve colors/textures (requires PLY or GLB format) |
 | `--list` | List buildings in tile without exporting |
 | `--list-results` | List all search results and exit |
 | `--result-index N` | Use Nth search result (0-based) |
@@ -251,6 +253,23 @@ Models exported by this tool contain attribution metadata crediting:
 - OneMap Singapore
 
 Please retain attribution when sharing or publishing printed models.
+
+## Color Export
+
+OneMap's 3D tiles include photo-realistic textures. Use `--with-colors` to preserve this visual data:
+
+```bash
+# PLY with baked vertex colors (viewable in MeshLab, Blender)
+onemap-slicer "Funan" -f ply --with-colors -o funan.ply
+
+# GLB with original textures (for web viewers, Blender, not printing)
+onemap-slicer "Funan" -f glb --with-colors -o funan.glb
+```
+
+- **PLY**: Textures are baked to per-vertex colors. Good for colored 3D printing or visualization.
+- **GLB**: Original PBR materials preserved. Best for digital visualization, not suitable for slicers.
+
+Note: Color export uses lightweight mesh repair to preserve visual data, resulting in less watertight meshes than print-ready exports.
 
 ## STL Export (Legacy)
 

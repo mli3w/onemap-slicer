@@ -1,3 +1,22 @@
+<!-- OPENSPEC:START -->
+# OpenSpec Instructions
+
+These instructions are for AI assistants working in this project.
+
+Always open `@/openspec/AGENTS.md` when the request:
+- Mentions planning or proposals (words like proposal, spec, change, plan)
+- Introduces new capabilities, breaking changes, architecture shifts, or big performance/security work
+- Sounds ambiguous and you need the authoritative spec before coding
+
+Use `@/openspec/AGENTS.md` to learn:
+- How to create and apply change proposals
+- Spec format and conventions
+- Project structure and guidelines
+
+Keep this managed block so 'openspec update' can refresh the instructions.
+
+<!-- OPENSPEC:END -->
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -56,7 +75,7 @@ b3dm_parser.py   # Parse B3DM binary format: extract header, batch table metadat
     ↓
 mesh_processor.py # Draco decompression (via gltf-transform), mesh loading (trimesh), repair (pymeshfix)
     ↓
-exporter.py      # Export to 3MF (preferred for Bambu Studio) or STL
+exporter.py      # Export to 3MF, STL, PLY (with vertex colors), or GLB (with textures)
 ```
 
 ### Key Technical Details
@@ -76,7 +95,7 @@ exporter.py      # Export to 3MF (preferred for Bambu Studio) or STL
 | Flag | Description |
 |------|-------------|
 | `-o, --output` | Output file path (default: building.3mf) |
-| `-f, --format` | Output format: 3mf or stl (default: 3mf) |
+| `-f, --format` | Output format: 3mf, stl, ply, or glb (default: 3mf) |
 | `-s, --scale` | Scale factor or ratio (default: 1:1000) |
 | `--lod` | Level of detail: low, medium, high (default: high) |
 | `--list` | List buildings in tile (don't export) |
@@ -85,3 +104,21 @@ exporter.py      # Export to 3MF (preferred for Bambu Studio) or STL
 | `--building-index N` | Export only Nth building from tile |
 | `--no-interactive` | Disable interactive menus (for scripts/CI) |
 | `--debug` | Show debug information |
+| `--with-colors` | Preserve colors/textures (requires PLY or GLB format) |
+
+### Color Export
+
+The `--with-colors` flag enables color preservation from OneMap's textured building models:
+
+```bash
+# Export with vertex colors to PLY (viewable in MeshLab, Blender)
+uv run onemap-slicer "Marina Bay Sands" -o mbs.ply -f ply --with-colors
+
+# Export with textures to GLB (for web viewers, not printing)
+uv run onemap-slicer "Marina Bay Sands" -o mbs.glb -f glb --with-colors
+```
+
+- **PLY**: Textures baked to vertex colors via `mesh.visual.to_color()`
+- **GLB**: Original textures/materials preserved
+
+Note: Uses lightweight repair instead of pymeshfix to preserve visual data, resulting in less watertight meshes than print-ready exports.

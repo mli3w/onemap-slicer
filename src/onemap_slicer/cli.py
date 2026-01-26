@@ -24,8 +24,10 @@ from onemap_slicer.b3dm_parser import (
 )
 from onemap_slicer.exporter import export_mesh, get_export_info
 from onemap_slicer.mesh_processor import (
+    bake_vertex_colors,
     decompress_draco,
     get_mesh_info,
+    has_visual_data,
     isolate_building,
     load_mesh,
     prepare_for_print,
@@ -263,7 +265,7 @@ Examples:
     parser.add_argument(
         "-f",
         "--format",
-        choices=["3mf", "stl"],
+        choices=["3mf", "stl", "ply", "glb"],
         default="3mf",
         help="Output format (default: 3mf)",
     )
@@ -322,7 +324,20 @@ Examples:
         help="Show debug information",
     )
 
+    parser.add_argument(
+        "--with-colors",
+        action="store_true",
+        help="Preserve colors/textures (requires PLY or GLB format)",
+    )
+
     args = parser.parse_args()
+
+    # Validate --with-colors flag requires compatible format
+    if args.with_colors and args.format not in ("ply", "glb"):
+        console.print(
+            "[yellow]Warning: --with-colors requires PLY or GLB format. Switching to ply.[/yellow]"
+        )
+        args.format = "ply"
 
     # Determine if we can use interactive mode
     interactive = is_interactive() and not args.no_interactive
@@ -555,6 +570,20 @@ Examples:
                 size = [bounds[1][i] - bounds[0][i] for i in range(3)]
                 print_status(f"Size (m): {size[0]:.1f} x {size[1]:.1f} x {size[2]:.1f}")
 
+        # Color processing (if --with-colors specified)
+        preserve_colors = args.with_colors
+        if preserve_colors:
+            if has_visual_data(mesh):
+                if args.format == "ply":
+                    print_status("Baking textures to vertex colors...")
+                    mesh = bake_vertex_colors(mesh)
+                elif args.format == "glb":
+                    print_status("Preserving original textures...")
+                print_success("Color data prepared")
+            else:
+                console.print("[yellow]Warning: No color data found in mesh[/yellow]")
+                preserve_colors = False
+
         # Step 7: Prepare for printing
         console.print("\n[bold]Preparing for 3D printing...[/bold]")
         print_status(f"Scale: {args.scale} ({scale})")
@@ -566,7 +595,7 @@ Examples:
             transient=True,
         ) as progress:
             progress.add_task("Repairing and scaling mesh...", total=None)
-            mesh = prepare_for_print(mesh, scale=scale)
+            mesh = prepare_for_print(mesh, scale=scale, preserve_colors=preserve_colors)
         print_success("Mesh prepared")
 
         if args.debug:

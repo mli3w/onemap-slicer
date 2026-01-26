@@ -1,4 +1,4 @@
-"""Export module for STL and 3MF file formats."""
+"""Export module for STL, 3MF, PLY, and GLB file formats."""
 
 import os
 import zipfile
@@ -195,6 +195,89 @@ def export_stl(
     return path
 
 
+def export_ply(
+    mesh,
+    path: str,
+    building_name: str | None = None,
+) -> str:
+    """
+    Export mesh to PLY format with vertex colors.
+
+    PLY format supports per-vertex colors, making it suitable for
+    visualization in tools like MeshLab or Blender.
+
+    Args:
+        mesh: trimesh object to export (should have vertex colors)
+        path: Output file path
+        building_name: Optional building name (unused, for API consistency)
+
+    Returns:
+        Path to exported file.
+    """
+    import trimesh
+
+    # Ensure directory exists
+    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+
+    # Ensure .ply extension
+    if not path.lower().endswith(".ply"):
+        path = path + ".ply"
+
+    if isinstance(mesh, trimesh.Scene):
+        # Concatenate all geometries for PLY export
+        meshes = [g for g in mesh.geometry.values() if isinstance(g, trimesh.Trimesh)]
+        if meshes:
+            combined = trimesh.util.concatenate(meshes)
+            # trimesh automatically includes vertex colors if present
+            combined.export(path, file_type="ply")
+        else:
+            raise ValueError("No meshes found in scene")
+    elif isinstance(mesh, trimesh.Trimesh):
+        # trimesh automatically includes vertex colors if present
+        mesh.export(path, file_type="ply")
+    else:
+        raise ValueError(f"Cannot export type: {type(mesh)}")
+
+    return path
+
+
+def export_glb(
+    mesh,
+    path: str,
+    building_name: str | None = None,
+) -> str:
+    """
+    Export mesh to GLB format preserving textures and materials.
+
+    GLB (binary glTF) preserves PBR materials and textures, suitable for
+    visualization in web viewers, Blender, or other 3D applications.
+
+    Args:
+        mesh: trimesh object to export
+        path: Output file path
+        building_name: Optional building name (unused, for API consistency)
+
+    Returns:
+        Path to exported file.
+    """
+    import trimesh
+
+    # Ensure directory exists
+    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+
+    # Ensure .glb extension
+    if not path.lower().endswith(".glb"):
+        path = path + ".glb"
+
+    if isinstance(mesh, (trimesh.Scene, trimesh.Trimesh)):
+        # Export preserves textures/materials automatically
+        mesh.export(path, file_type="glb")
+    else:
+        raise ValueError(f"Cannot export type: {type(mesh)}")
+
+    return path
+
+
 def export_mesh(
     mesh,
     path: str,
@@ -207,7 +290,7 @@ def export_mesh(
     Args:
         mesh: trimesh object to export
         path: Output file path
-        format: Output format ('3mf' or 'stl')
+        format: Output format ('3mf', 'stl', 'ply', or 'glb')
         building_name: Optional building name for metadata/header
 
     Returns:
@@ -219,8 +302,12 @@ def export_mesh(
         return export_3mf(mesh, path, building_name=building_name)
     elif format == "stl":
         return export_stl(mesh, path, building_name=building_name)
+    elif format == "ply":
+        return export_ply(mesh, path, building_name=building_name)
+    elif format == "glb":
+        return export_glb(mesh, path, building_name=building_name)
     else:
-        raise ValueError(f"Unsupported format: {format}. Use '3mf' or 'stl'.")
+        raise ValueError(f"Unsupported format: {format}. Use '3mf', 'stl', 'ply', or 'glb'.")
 
 
 def get_export_info(path: str) -> dict:
