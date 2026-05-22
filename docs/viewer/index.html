@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OneMap 3D — Southern Singapore</title>
+
+<script>
+  // CESIUM_BASE_URL must be set before Cesium.js is loaded.
+  window.CESIUM_BASE_URL = 'https://cdn.jsdelivr.net/npm/cesium@1.124/Build/Cesium/';
+</script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cesium@1.124/Build/Cesium/Widgets/widgets.css" />
+<script src="https://cdn.jsdelivr.net/npm/cesium@1.124/Build/Cesium/Cesium.js"></script>
+
+<style>
+  html, body, #cesium { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #000; }
+
+  .panel {
+    position: absolute; z-index: 10; background: rgba(20, 22, 28, 0.88); color: #eaeaea;
+    border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 12px 14px;
+    backdrop-filter: blur(6px); box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+  #header { top: 12px; left: 12px; max-width: 340px; }
+  #header h1 { margin: 0 0 4px; font-size: 14px; font-weight: 600; letter-spacing: 0.2px; }
+  #header p { margin: 0; font-size: 12px; color: #b8b8b8; line-height: 1.4; }
+
+  #search { top: 12px; left: 50%; transform: translateX(-50%); padding: 6px 6px 6px 12px; display: flex; gap: 8px; align-items: center; }
+  #search input { background: transparent; border: 0; color: #eaeaea; font-size: 13px; width: 260px; outline: none; }
+  #search input::placeholder { color: #888; }
+  #search button { background: #2b7cff; color: white; border: 0; border-radius: 5px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  #search button:hover { background: #4a8dff; }
+
+  #info { bottom: 12px; left: 12px; max-width: 320px; display: none; }
+  #info h2 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+  #info dl { margin: 0; font-size: 12px; display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; }
+  #info dt { color: #888; }
+  #info dd { margin: 0; color: #eaeaea; }
+
+  #status { bottom: 12px; right: 12px; font-size: 11px; color: #aaa; }
+  #status .ok { color: #6fdc8c; }
+  #status .err { color: #ff7b72; }
+
+  #views { top: 64px; left: 12px; display: flex; flex-direction: column; gap: 4px; padding: 6px; }
+  #views button { background: rgba(255,255,255,0.06); color: #eaeaea; border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 4px; padding: 6px 10px; font-size: 12px; cursor: pointer; text-align: left; }
+  #views button:hover { background: rgba(255,255,255,0.12); }
+</style>
+</head>
+<body>
+
+<div id="cesium"></div>
+
+<div id="header" class="panel">
+  <h1>OneMap 3D — Southern Singapore</h1>
+  <p>Drag to orbit, right-drag to pan, scroll to zoom. Click a building for details.</p>
+</div>
+
+<form id="search" class="panel" onsubmit="return doSearch(event)">
+  <input id="q" type="search" placeholder="Search a building, address, or postal code" />
+  <button type="submit">Go</button>
+</form>
+
+<div id="views" class="panel">
+  <button data-view="south">Southern Singapore</button>
+  <button data-view="mbs">Marina Bay</button>
+  <button data-view="cbd">CBD / Tanjong Pagar</button>
+  <button data-view="sentosa">Sentosa</button>
+</div>
+
+<div id="info" class="panel">
+  <h2 id="info-name">—</h2>
+  <dl id="info-list"></dl>
+</div>
+
+<div id="status" class="panel">
+  <span id="status-text">Loading…</span>
+</div>
+
+<script>
+  const TILESET_URL = 'https://www.onemap.gov.sg/omapi/tilesets/sg_noterrain_tiles/tileset.json';
+  const BASEMAP_URL = 'https://www.onemap.gov.sg/maps/tiles/Default_HD/{z}/{x}/{y}.png';
+  const SEARCH_URL  = 'https://www.onemap.gov.sg/omapi/ss/search';
+
+  // Southern Singapore framing: camera south of Sentosa, looking north over CBD / Marina Bay.
+  const VIEWS = {
+    south:   { lon: 103.840, lat: 1.205, height: 9000, pitch: -38 },
+    mbs:     { lon: 103.860, lat: 1.275, height: 1800, pitch: -28 },
+    cbd:     { lon: 103.847, lat: 1.265, height: 1600, pitch: -30 },
+    sentosa: { lon: 103.825, lat: 1.235, height: 2500, pitch: -32 },
+  };
+
+  function setStatus(text, kind) {
+    const el = document.getElementById('status-text');
+    el.textContent = text;
+    el.className = kind || '';
+  }
+
+  // No Ion token — we use ellipsoid terrain + a custom imagery provider, so we don't hit Ion.
+  Cesium.Ion.defaultAccessToken = '';
+
+  const viewer = new Cesium.Viewer('cesium', {
+    baseLayerPicker: false,
+    geocoder: false,
+    homeButton: false,
+    navigationHelpButton: false,
+    sceneModePicker: false,
+    timeline: false,
+    animation: false,
+    fullscreenButton: false,
+    infoBox: false,
+    selectionIndicator: false,
+    baseLayer: Cesium.ImageryLayer.fromProviderAsync(
+      Promise.resolve(new Cesium.UrlTemplateImageryProvider({
+        url: BASEMAP_URL,
+        credit: '<a href="https://www.onemap.gov.sg/legal/imagedisclaimer.html" target="_blank">© SLA OneMap</a>',
+        maximumLevel: 19,
+      })),
+    ),
+  });
+
+  viewer.scene.globe.depthTestAgainstTerrain = true;
+  viewer.scene.skyAtmosphere.show = true;
+
+  function flyTo(view, duration = 2.0) {
+    viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(view.lon, view.lat, view.height),
+      orientation: {
+        heading: Cesium.Math.toRadians(0),
+        pitch: Cesium.Math.toRadians(view.pitch),
+        roll: 0,
+      },
+      duration,
+    });
+  }
+
+  // Initial framing: southern Singapore overview.
+  flyTo(VIEWS.south, 0);
+
+  // Load the OneMap 3D Tiles dataset.
+  (async () => {
+    try {
+      setStatus('Loading 3D tileset…');
+      const tileset = await Cesium.Cesium3DTileset.fromUrl(TILESET_URL, {
+        maximumScreenSpaceError: 16,
+      });
+      viewer.scene.primitives.add(tileset);
+      tileset.initialTilesLoaded.addEventListener(() => setStatus('Tileset ready', 'ok'));
+      window.__tileset = tileset;
+    } catch (err) {
+      console.error(err);
+      setStatus('Failed to load tileset (likely CORS — see notes)', 'err');
+    }
+  })();
+
+  // Click-to-inspect: read batch table properties from the clicked building.
+  const infoEl  = document.getElementById('info');
+  const nameEl  = document.getElementById('info-name');
+  const listEl  = document.getElementById('info-list');
+
+  const PROPS = [
+    ['Height',                       'Height (m)',     v => Number(v).toFixed(1)],
+    ['bldg:storeysaboveground',      'Storeys',        v => v],
+    ['bldg:measuredheight',          'Measured (m)',   v => Number(v).toFixed(1)],
+    ['Latitude',                     'Latitude',       v => Number(v).toFixed(5)],
+    ['Longitude',                    'Longitude',      v => Number(v).toFixed(5)],
+    ['gml:id',                       'GML id',         v => v],
+    ['core:creationdate',            'Created',        v => v],
+  ];
+
+  const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+  handler.setInputAction((click) => {
+    const picked = viewer.scene.pick(click.position);
+    if (!(picked instanceof Cesium.Cesium3DTileFeature)) {
+      infoEl.style.display = 'none';
+      return;
+    }
+    const name = picked.getProperty('gml:name') || picked.getProperty('name') || 'Unnamed building';
+    nameEl.textContent = name;
+    listEl.innerHTML = '';
+    for (const [key, label, fmt] of PROPS) {
+      const v = picked.getProperty(key);
+      if (v === undefined || v === null || v === '') continue;
+      const dt = document.createElement('dt'); dt.textContent = label;
+      const dd = document.createElement('dd'); dd.textContent = fmt(v);
+      listEl.appendChild(dt); listEl.appendChild(dd);
+    }
+    infoEl.style.display = 'block';
+  }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+  // View shortcuts.
+  document.getElementById('views').addEventListener('click', (e) => {
+    const k = e.target.dataset?.view;
+    if (k && VIEWS[k]) flyTo(VIEWS[k]);
+  });
+
+  // Search via OneMap's public search API. Fly to the first hit.
+  async function doSearch(e) {
+    e.preventDefault();
+    const q = document.getElementById('q').value.trim();
+    if (!q) return false;
+    setStatus(`Searching "${q}"…`);
+    try {
+      const url = `${SEARCH_URL}?searchVal=${encodeURIComponent(q)}&returnGeom=Y&getAddrDetails=Y&pageNum=1`;
+      const res = await fetch(url);
+      const data = await res.json();
+      const hit = data.results?.[0];
+      if (!hit) { setStatus('No results', 'err'); return false; }
+      const lat = parseFloat(hit.LATITUDE), lon = parseFloat(hit.LONGITUDE);
+      flyTo({ lon, lat: lat - 0.0025, height: 1200, pitch: -30 });
+      setStatus(`Found: ${hit.SEARCHVAL}`, 'ok');
+    } catch (err) {
+      console.error(err);
+      setStatus('Search failed (CORS?)', 'err');
+    }
+    return false;
+  }
+  window.doSearch = doSearch;
+</script>
+
+<!--
+  HOW TO RUN
+
+  CORS: browsers will only let this page fetch onemap.gov.sg if OneMap sends
+  permissive CORS headers. Open the page from a local web server (not file://):
+
+      cd docs/viewer
+      python3 -m http.server 8000
+      # then visit http://localhost:8000/
+
+  If the tileset fails to load with a CORS error, you'll need a small proxy
+  (e.g. a Caddy/nginx reverse-proxy in front of onemap.gov.sg) — out of scope
+  for this scaffold.
+
+  DATA: © Singapore Land Authority (OneMap). See
+  https://www.onemap.gov.sg/termsofuse before redistributing.
+-->
+
+</body>
+</html>
