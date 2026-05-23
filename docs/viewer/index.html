@@ -78,9 +78,11 @@
 </div>
 
 <script>
-  const TILESET_URL = 'https://www.onemap.gov.sg/omapi/tilesets/sg_noterrain_tiles/tileset.json';
-  const BASEMAP_URL = 'https://www.onemap.gov.sg/maps/tiles/Default_HD/{z}/{x}/{y}.png';
-  const SEARCH_URL  = 'https://www.onemap.gov.sg/omapi/ss/search';
+  // Same-origin paths; the dev server (serve.mjs) proxies them to
+  // www.onemap.gov.sg and adds CORS headers.
+  const TILESET_URL = '/omapi/tilesets/sg_noterrain_tiles/tileset.json';
+  const BASEMAP_URL = '/maps/tiles/Default_HD/{z}/{x}/{y}.png';
+  const SEARCH_URL  = '/omapi/ss/search';
 
   // Southern Singapore framing: camera south of Sentosa, looking north over CBD / Marina Bay.
   const VIEWS = {
@@ -221,16 +223,13 @@
 <!--
   HOW TO RUN
 
-  CORS: browsers will only let this page fetch onemap.gov.sg if OneMap sends
-  permissive CORS headers. Open the page from a local web server (not file://):
-
       cd docs/viewer
-      python3 -m http.server 8000
+      node serve.mjs
       # then visit http://localhost:8000/
 
-  If the tileset fails to load with a CORS error, you'll need a small proxy
-  (e.g. a Caddy/nginx reverse-proxy in front of onemap.gov.sg) — out of scope
-  for this scaffold.
+  serve.mjs is a tiny zero-dependency dev server that also reverse-proxies
+  /omapi/* and /maps/* to www.onemap.gov.sg, which is what makes the tile
+  fetches work from the browser (OneMap doesn't send CORS headers itself).
 
   DATA: © Singapore Land Authority (OneMap). See
   https://www.onemap.gov.sg/termsofuse before redistributing.
