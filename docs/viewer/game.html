@@ -1,0 +1,689 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Singapore Kaiju — WASD Mode</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #0a0e16; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  canvas { display: block; }
+
+  .panel {
+    position: fixed; z-index: 10; background: rgba(20, 22, 28, 0.88); color: #eaeaea;
+    border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 10px 14px;
+    backdrop-filter: blur(6px); box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+  #hud { top: 12px; left: 12px; font-size: 12px; line-height: 1.6; }
+  #hud b { color: #6fdc8c; }
+  #hud .hint { color: #888; font-size: 11px; margin-top: 4px; }
+
+  #status { bottom: 12px; right: 12px; font-size: 11px; color: #aaa; }
+  #status.ok  { color: #6fdc8c; }
+  #status.err { color: #ff7b72; }
+
+  #stats { top: 12px; right: 12px; font-size: 11px; color: #888; font-variant-numeric: tabular-nums; }
+
+  #lockHint {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.55); color: #eee; font-size: 16px; z-index: 20; cursor: pointer;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+  }
+  #lockHint.hidden { display: none; }
+  #lockHint b { color: #6fdc8c; }
+</style>
+</head>
+<body>
+
+<div id="hud" class="panel">
+  <div><b>WASD</b> walk &nbsp;·&nbsp; <b>Shift</b> stomp-run &nbsp;·&nbsp; <b>Space</b> jump &nbsp;·&nbsp; <b>Mouse</b> look</div>
+  <div class="hint">Walk into buildings to trample them. Esc releases the cursor.</div>
+</div>
+
+<div id="stats" class="panel">—</div>
+<div id="status" class="panel">Loading tileset…</div>
+
+<div id="lockHint">Click to enter the city — <b>WASD</b> + mouse to move</div>
+
+<!-- Import map: three + 3d-tiles-renderer via esm.sh. Pin versions so behaviour is reproducible. -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://esm.sh/three@0.169.0",
+    "three/addons/": "https://esm.sh/three@0.169.0/examples/jsm/",
+    "three/examples/jsm/": "https://esm.sh/three@0.169.0/examples/jsm/",
+    "3d-tiles-renderer": "https://esm.sh/3d-tiles-renderer@0.4.7?external=three",
+    "3d-tiles-renderer/plugins": "https://esm.sh/3d-tiles-renderer@0.4.7/plugins?external=three"
+  }
+}
+</script>
+
+<script>
+// Surface any module-load or runtime errors directly in the status pill.
+window.addEventListener('error', (e) => {
+  const s = document.getElementById('status');
+  if (s) { s.textContent = 'ERR: ' + (e.message || e.error); s.className = 'panel err'; }
+  console.error('[game.html]', e);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const s = document.getElementById('status');
+  if (s) { s.textContent = 'REJ: ' + (e.reason?.message || e.reason); s.className = 'panel err'; }
+  console.error('[game.html] rejection', e.reason);
+});
+</script>
+
+<script type="module">
+let __step = 'start';
+try {
+const setStep = (s) => { __step = s; const el = document.getElementById('status'); if (el) el.textContent = 'step: ' + s; };
+setStep('importing three');
+const THREE = await import('three');
+setStep('importing 3d-tiles-renderer');
+const { TilesRenderer } = await import('3d-tiles-renderer');
+setStep('importing plugins');
+const { TilesFadePlugin, GLTFExtensionsPlugin } = await import('3d-tiles-renderer/plugins');
+setStep('importing DRACOLoader');
+const { DRACOLoader } = await import('three/addons/loaders/DRACOLoader.js');
+setStep('imports done');
+
+// ─── Config ──────────────────────────────────────────────────────────────────
+const TILESET_URL = '/omapi/tilesets/sg_noterrain_tiles/tileset.json';
+
+// Spawn near Marina Bay Sands. The whole scene is re-centered around this point.
+const ORIGIN_LAT = 1.2834;
+const ORIGIN_LON = 103.8607;
+
+// Kaiju is ~100m tall — about as tall as a 30-storey building.
+const KAIJU_HEIGHT = 100;
+const WALK_SPEED   = 60;   // m/s. Kaiju strides aren't fast — 60 m/s ≈ 215 km/h.
+const RUN_SPEED    = 180;  // Shift = stomp run.
+const JUMP_VELOCITY = 90;
+const GRAVITY      = -180;
+
+// Smoothness knobs. Bigger numbers = more aggressive streaming.
+const ERROR_TARGET   = 6;     // Lower = sharper tiles, more loads. 6 is the library default.
+const LRU_MAX_SIZE   = 1200;  // How many tiles to keep cached. Library default ~800.
+const DOWNLOAD_JOBS  = 24;    // Parallel HTTP fetches. Library default 6.
+const PARSE_JOBS     = 4;     // Parallel B3DM/glTF parses. Library default 1.
+
+// ─── DOM helpers ─────────────────────────────────────────────────────────────
+const statusEl = document.getElementById('status');
+const statsEl  = document.getElementById('stats');
+const lockHint = document.getElementById('lockHint');
+const setStatus = (text, kind) => { statusEl.textContent = text; statusEl.className = 'panel ' + (kind || ''); };
+
+// ─── Scene, camera, renderer ─────────────────────────────────────────────────
+const scene  = new THREE.Scene();
+scene.background = new THREE.Color(0x87b3d6); // muted Singapore daylight sky
+scene.fog = new THREE.Fog(0x87b3d6, 1500, 12000);
+
+const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 1, 30000);
+camera.position.set(0, KAIJU_HEIGHT * 1.8, 400);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+document.body.appendChild(renderer.domElement);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ─── Lighting ────────────────────────────────────────────────────────────────
+scene.add(new THREE.HemisphereLight(0xb1d4ff, 0x4a4030, 0.9));
+const sun = new THREE.DirectionalLight(0xfff5e0, 1.2);
+sun.position.set(800, 1500, 600);
+scene.add(sun);
+
+// ─── Ground backstop (created upfront — full basemap is built later) ─────────
+{
+  const backstop = new THREE.Mesh(
+    new THREE.PlaneGeometry(60000, 60000),
+    new THREE.MeshBasicMaterial({ color: 0x252a30 }),
+  );
+  backstop.rotation.x = -Math.PI / 2;
+  backstop.position.y = -1.2;
+  scene.add(backstop);
+}
+
+// Basemap construction is deferred until after setLatLonToYUp has been called
+// on the tileset — that's when tiles.group.matrixWorld becomes a valid
+// ECEF→world transform we can re-use to place basemap tiles in the SAME frame
+// the buildings live in. Anything else risks misalignment.
+function buildBasemap(tilesRenderer) {
+  const Z = 16;
+  const N = 1 << Z;
+  const lonToTileX = (lon) => (lon + 180) / 360 * N;
+  const latToTileY = (lat) => {
+    const r = THREE.MathUtils.degToRad(lat);
+    return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * N;
+  };
+  const tileXToLon = (x) => x / N * 360 - 180;
+  const tileYToLat = (y) => {
+    const n = Math.PI - 2 * Math.PI * y / N;
+    return THREE.MathUtils.radToDeg(Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))));
+  };
+
+  const cx = Math.floor(lonToTileX(ORIGIN_LON));
+  const cy = Math.floor(latToTileY(ORIGIN_LAT));
+  const RANGE = 6;
+
+  // Convert a lat/lon (degrees) to a world-space Vector3 by going through the
+  // tile renderer's ECEF transform — guarantees we land in the same frame as the buildings.
+  tilesRenderer.group.updateMatrixWorld(true);
+  const ecef = new THREE.Vector3();
+  const latLonToWorld = (latDeg, lonDeg, out = new THREE.Vector3()) => {
+    tilesRenderer.ellipsoid.getCartographicToPosition(
+      THREE.MathUtils.degToRad(latDeg),
+      THREE.MathUtils.degToRad(lonDeg),
+      0,
+      ecef,
+    );
+    return out.copy(ecef).applyMatrix4(tilesRenderer.group.matrixWorld);
+  };
+
+  const loader = new THREE.TextureLoader();
+  const Y = -0.5; // slightly under the buildings' baseline
+  const cornerNW = new THREE.Vector3();
+  const cornerNE = new THREE.Vector3();
+  const cornerSW = new THREE.Vector3();
+  const cornerSE = new THREE.Vector3();
+
+  // UV layout (with default flipY=true on the texture):
+  //   (0,1)NW ┌────────┐ NE(1,1)
+  //           │        │
+  //   (0,0)SW └────────┘ SE(1,0)
+  const uvArr = new Float32Array([0, 1,  1, 1,  0, 0,  1, 0]);
+  const indices = [0, 2, 1,  1, 2, 3];
+
+  for (let dy = -RANGE; dy <= RANGE; dy++) {
+    for (let dx = -RANGE; dx <= RANGE; dx++) {
+      const tx = cx + dx;
+      const ty = cy + dy;
+      const lonW = tileXToLon(tx), lonE = tileXToLon(tx + 1);
+      const latN = tileYToLat(ty), latS = tileYToLat(ty + 1);
+
+      latLonToWorld(latN, lonW, cornerNW);
+      latLonToWorld(latN, lonE, cornerNE);
+      latLonToWorld(latS, lonW, cornerSW);
+      latLonToWorld(latS, lonE, cornerSE);
+
+      const posArr = new Float32Array([
+        cornerNW.x, Y, cornerNW.z,
+        cornerNE.x, Y, cornerNE.z,
+        cornerSW.x, Y, cornerSW.z,
+        cornerSE.x, Y, cornerSE.z,
+      ]);
+
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+      geom.setAttribute('uv',       new THREE.BufferAttribute(uvArr,  2));
+      geom.setIndex(indices);
+      geom.computeVertexNormals();
+
+      const tex = loader.load(`/maps/tiles/Grey/${Z}/${tx}/${ty}.png`);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = 4;
+      const tile = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({ map: tex }));
+      scene.add(tile);
+    }
+  }
+}
+
+// ─── Kaiju (the player) ──────────────────────────────────────────────────────
+// Procedural Godzilla-ish kaiju: body, head, two legs, two arms, tail, dorsal
+// spikes. All sub-parts named so we can animate the walk cycle and a roar.
+const kaiju = new THREE.Group();
+const kaijuParts = {};
+{
+  const H = KAIJU_HEIGHT;
+  const skin = new THREE.MeshStandardMaterial({ color: 0x2c4030, roughness: 0.7, metalness: 0.05 });
+  const belly = new THREE.MeshStandardMaterial({ color: 0x6b7556, roughness: 0.85 });
+  const teeth = new THREE.MeshStandardMaterial({ color: 0xf5e9c4, roughness: 0.3 });
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0xffeb6e, emissive: 0xff9020, emissiveIntensity: 3 });
+  const spikeMat = new THREE.MeshStandardMaterial({ color: 0x3a2a4a, roughness: 0.5 });
+
+  // Torso: stretched ellipsoid (squashed sphere) — T-rex barrel chest
+  const torso = new THREE.Mesh(new THREE.SphereGeometry(H * 0.22, 18, 12), skin);
+  torso.scale.set(1, 1.1, 1.3);
+  torso.position.y = H * 0.5;
+  kaiju.add(torso);
+
+  // Belly highlight
+  const bellyMesh = new THREE.Mesh(new THREE.SphereGeometry(H * 0.18, 14, 10), belly);
+  bellyMesh.scale.set(0.7, 1.0, 1.05);
+  bellyMesh.position.set(0, H * 0.45, H * 0.05);
+  kaiju.add(bellyMesh);
+
+  // Neck — short and thick
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(H * 0.08, H * 0.12, H * 0.14, 12), skin);
+  neck.position.set(0, H * 0.74, -H * 0.12);
+  neck.rotation.x = 0.4;
+  kaiju.add(neck);
+
+  // Head — oblong, jaw juts forward
+  const head = new THREE.Group();
+  head.position.set(0, H * 0.82, -H * 0.22);
+  const skull = new THREE.Mesh(new THREE.SphereGeometry(H * 0.14, 14, 10), skin);
+  skull.scale.set(0.9, 0.85, 1.25);
+  head.add(skull);
+  // Lower jaw
+  const jaw = new THREE.Mesh(new THREE.BoxGeometry(H * 0.16, H * 0.06, H * 0.22), skin);
+  jaw.position.set(0, -H * 0.08, -H * 0.04);
+  head.add(jaw);
+  // Teeth row
+  for (let i = -2; i <= 2; i++) {
+    const tooth = new THREE.Mesh(new THREE.ConeGeometry(H * 0.012, H * 0.04, 6), teeth);
+    tooth.position.set(i * H * 0.025, -H * 0.04, -H * 0.13);
+    tooth.rotation.x = Math.PI;
+    head.add(tooth);
+  }
+  // Eyes — two glowing yellow dots
+  for (const dx of [-0.06, 0.06]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(H * 0.022, 10, 8), eyeMat);
+    eye.position.set(dx * H, H * 0.04, -H * 0.10);
+    head.add(eye);
+  }
+  // Brow ridge horns
+  for (const dx of [-0.07, 0.07]) {
+    const horn = new THREE.Mesh(new THREE.ConeGeometry(H * 0.018, H * 0.08, 6), spikeMat);
+    horn.position.set(dx * H, H * 0.12, -H * 0.04);
+    horn.rotation.x = -0.3;
+    head.add(horn);
+  }
+  kaiju.add(head);
+  kaijuParts.head = head;
+
+  // Dorsal spikes — row of 6 ascending then descending down the spine
+  for (let i = 0; i < 6; i++) {
+    const t = i / 5;
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(H * 0.035, H * (0.10 + 0.08 * Math.sin(t * Math.PI)), 6), spikeMat);
+    spike.position.set(0, H * (0.68 - t * 0.05), H * (0.15 + t * 0.5));
+    kaiju.add(spike);
+  }
+
+  // Tail — segmented cones, tapering. Tracked for animated wag.
+  const tail = new THREE.Group();
+  tail.position.set(0, H * 0.45, H * 0.28);
+  let prevAngle = 0;
+  const tailSegments = [];
+  for (let i = 0; i < 7; i++) {
+    const t = i / 6;
+    const radius = H * (0.13 - t * 0.10);
+    const len = H * 0.18;
+    const seg = new THREE.Group();
+    const segMesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius * 0.85, len, 10), skin);
+    segMesh.rotation.x = Math.PI / 2;
+    segMesh.position.z = len / 2;
+    seg.add(segMesh);
+    if (i === 0) tail.add(seg);
+    else tailSegments[i - 1].add(seg);
+    seg.position.z = i === 0 ? 0 : H * 0.18;
+    tailSegments.push(seg);
+  }
+  kaiju.add(tail);
+  kaijuParts.tailSegments = tailSegments;
+
+  // Legs — pivot at hip, knee bend. Mesh = upper thigh + lower shin + foot.
+  function makeLeg(side) {
+    const hip = new THREE.Group();
+    hip.position.set(side * H * 0.12, H * 0.42, H * 0.02);
+
+    const thigh = new THREE.Mesh(new THREE.CylinderGeometry(H * 0.10, H * 0.08, H * 0.22, 10), skin);
+    thigh.position.y = -H * 0.11;
+    hip.add(thigh);
+
+    const knee = new THREE.Group();
+    knee.position.y = -H * 0.22;
+    hip.add(knee);
+
+    const shin = new THREE.Mesh(new THREE.CylinderGeometry(H * 0.08, H * 0.06, H * 0.20, 10), skin);
+    shin.position.y = -H * 0.10;
+    knee.add(shin);
+
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(H * 0.16, H * 0.06, H * 0.22), skin);
+    foot.position.set(0, -H * 0.20 - H * 0.03, -H * 0.04);
+    knee.add(foot);
+    // Three claws
+    for (let i = -1; i <= 1; i++) {
+      const claw = new THREE.Mesh(new THREE.ConeGeometry(H * 0.018, H * 0.05, 6), teeth);
+      claw.position.set(i * H * 0.05, -H * 0.20 - H * 0.04, -H * 0.16);
+      claw.rotation.x = -Math.PI / 2;
+      knee.add(claw);
+    }
+    return { hip, knee };
+  }
+  kaijuParts.legL = makeLeg(-1);
+  kaijuParts.legR = makeLeg(+1);
+  kaiju.add(kaijuParts.legL.hip);
+  kaiju.add(kaijuParts.legR.hip);
+
+  // Arms — stubby T-rex style, pivot at shoulder
+  function makeArm(side) {
+    const shoulder = new THREE.Group();
+    shoulder.position.set(side * H * 0.20, H * 0.62, -H * 0.04);
+
+    const upper = new THREE.Mesh(new THREE.CylinderGeometry(H * 0.05, H * 0.045, H * 0.14, 8), skin);
+    upper.position.y = -H * 0.07;
+    shoulder.add(upper);
+
+    const elbow = new THREE.Group();
+    elbow.position.y = -H * 0.14;
+    shoulder.add(elbow);
+
+    const forearm = new THREE.Mesh(new THREE.CylinderGeometry(H * 0.045, H * 0.035, H * 0.10, 8), skin);
+    forearm.position.y = -H * 0.05;
+    elbow.add(forearm);
+
+    // Two claws at the wrist
+    for (const dx of [-0.025, 0.025]) {
+      const claw = new THREE.Mesh(new THREE.ConeGeometry(H * 0.012, H * 0.04, 6), teeth);
+      claw.position.set(dx * H, -H * 0.12, 0);
+      claw.rotation.x = Math.PI;
+      elbow.add(claw);
+    }
+    return { shoulder, elbow };
+  }
+  kaijuParts.armL = makeArm(-1);
+  kaijuParts.armR = makeArm(+1);
+  kaiju.add(kaijuParts.armL.shoulder);
+  kaiju.add(kaijuParts.armR.shoulder);
+
+  // Default leg bend so kaiju doesn't look stiff at rest
+  kaijuParts.legL.hip.rotation.x = -0.05;
+  kaijuParts.legR.hip.rotation.x =  0.05;
+  kaijuParts.legL.knee.rotation.x = 0.3;
+  kaijuParts.legR.knee.rotation.x = 0.3;
+  kaijuParts.armL.shoulder.rotation.x = 0.3;
+  kaijuParts.armR.shoulder.rotation.x = 0.3;
+  kaijuParts.armL.elbow.rotation.x = -0.8;
+  kaijuParts.armR.elbow.rotation.x = -0.8;
+}
+scene.add(kaiju);
+
+// Kaiju physics state
+const velocity = new THREE.Vector3();
+let grounded = false;
+let walkCycle = 0; // radians — drives the leg/tail swing animation
+let isMoving = false;
+
+// ─── Trample mechanic ────────────────────────────────────────────────────────
+// Any building mesh within STOMP_RADIUS of a foot whose kaiju is actively walking
+// gets a "crumble" animation: scaled-down + sunk + recolored, then hidden.
+const STOMP_RADIUS = KAIJU_HEIGHT * 0.45;  // ~45m around each foot
+const crumbling = []; // { mesh, originalScale, originalY, t }
+const trampledMeshes = new WeakSet(); // avoid retriggering
+let trampledCount = 0;
+
+function tryTrample() {
+  // Sample the two foot positions in world space
+  const footL = new THREE.Vector3(); const footR = new THREE.Vector3();
+  // Foot meshes are inside knee groups; approximate from kaiju root + hip x-offset
+  footL.set(-KAIJU_HEIGHT * 0.12, 0, 0).applyMatrix4(kaiju.matrixWorld);
+  footR.set( KAIJU_HEIGHT * 0.12, 0, 0).applyMatrix4(kaiju.matrixWorld);
+
+  // Sphere collision: any mesh inside tileset with centroid within radius
+  tiles.group.traverse((o) => {
+    if (!o.isMesh || trampledMeshes.has(o)) return;
+    // Compute mesh world centroid via boundingSphere (cheap, cached)
+    if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+    const c = o.geometry.boundingSphere.center.clone().applyMatrix4(o.matrixWorld);
+    const dL = c.distanceTo(footL);
+    const dR = c.distanceTo(footR);
+    const stompRad = STOMP_RADIUS + o.geometry.boundingSphere.radius * 0.3;
+    if (dL < stompRad || dR < stompRad) {
+      trampledMeshes.add(o);
+      trampledCount++;
+      crumbling.push({ mesh: o, t: 0, originalScale: o.scale.clone(), originalY: o.position.y });
+      // Camera shake on impact (set when feet touch — applied each frame)
+      shakeImpulse = Math.min(shakeImpulse + 0.6, 2.0);
+    }
+  });
+}
+
+let shakeImpulse = 0;
+
+function updateCrumbling(dt) {
+  for (let i = crumbling.length - 1; i >= 0; i--) {
+    const c = crumbling[i];
+    c.t += dt;
+    const k = Math.min(c.t / 0.8, 1);
+    c.mesh.scale.set(
+      c.originalScale.x * (1 - k * 0.4),
+      c.originalScale.y * (1 - k * 0.95),
+      c.originalScale.z * (1 - k * 0.4),
+    );
+    c.mesh.position.y = c.originalY - k * 30;
+    if (k >= 1) { c.mesh.visible = false; crumbling.splice(i, 1); }
+  }
+}
+
+// Throttle trample checks (this is also a tiles.group traversal — keep it cheap)
+let lastTrampleCheck = 0;
+const TRAMPLE_INTERVAL = 80;
+
+// ─── Tileset (OneMap buildings) ──────────────────────────────────────────────
+const dracoLoader = new DRACOLoader().setDecoderPath(
+  'https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/libs/draco/gltf/'
+);
+
+const tiles = new TilesRenderer(TILESET_URL);
+tiles.registerPlugin(new GLTFExtensionsPlugin({ dracoLoader }));
+tiles.registerPlugin(new TilesFadePlugin({ fadeDuration: 250, fadeRootTiles: true }));
+
+tiles.setCamera(camera);
+tiles.setResolutionFromRenderer(camera, renderer);
+
+tiles.errorTarget = ERROR_TARGET;
+tiles.lruCache.maxSize = LRU_MAX_SIZE;
+tiles.lruCache.minSize = Math.floor(LRU_MAX_SIZE * 0.75);
+tiles.downloadQueue.maxJobs = DOWNLOAD_JOBS;
+tiles.parseQueue.maxJobs = PARSE_JOBS;
+
+scene.add(tiles.group);
+
+// Re-center the ECEF tileset so Marina Bay is at world origin with +Y up.
+// (The tileset's native coords put Singapore ~6.4M metres from the world origin,
+// in a frame where 'up' is the radial direction — useless for a flat-world game.)
+tiles.addEventListener('load-tile-set', () => {
+  tiles.setLatLonToYUp(THREE.MathUtils.degToRad(ORIGIN_LAT), THREE.MathUtils.degToRad(ORIGIN_LON));
+  buildBasemap(tiles);  // must happen after setLatLonToYUp so the transform is live
+  setStatus('Tileset loading buildings…');
+});
+
+tiles.addEventListener('tiles-load-end', () => setStatus('All visible tiles loaded', 'ok'));
+
+// ─── Input ───────────────────────────────────────────────────────────────────
+const keys = new Set();
+addEventListener('keydown', (e) => keys.add(e.code));
+addEventListener('keyup',   (e) => keys.delete(e.code));
+
+let yaw = 0, pitch = -0.25; // pitch < 0 looks downward
+const MOUSE_SENS = 0.0018;
+
+document.body.addEventListener('click', () => {
+  if (!document.pointerLockElement) document.body.requestPointerLock();
+});
+
+document.addEventListener('pointerlockchange', () => {
+  lockHint.classList.toggle('hidden', !!document.pointerLockElement);
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!document.pointerLockElement) return;
+  yaw   -= e.movementX * MOUSE_SENS;
+  pitch -= e.movementY * MOUSE_SENS;
+  pitch  = THREE.MathUtils.clamp(pitch, -1.2, 0.3);
+});
+
+// Smoothed movement state — kaiju accelerates/decelerates rather than snapping
+const smoothedVel = new THREE.Vector3();
+const targetVel   = new THREE.Vector3();
+const ACCEL_TIME  = 0.18;  // seconds to reach full speed; smaller = snappier
+
+// ─── Ground snap (raycast down against the streamed building tiles) ──────────
+// Recursive raycasting against hundreds of streamed meshes is too slow per-frame.
+// We sample at most every RAY_INTERVAL ms and lerp toward the result in between.
+const raycaster = new THREE.Raycaster();
+const downDir = new THREE.Vector3(0, -1, 0);
+const RAY_INTERVAL = 120;
+let lastRayTime = 0;
+let cachedGroundY = 0;
+
+function groundHeightAt(x, z) {
+  const now = performance.now();
+  if (now - lastRayTime < RAY_INTERVAL) return cachedGroundY;
+  lastRayTime = now;
+  raycaster.set(new THREE.Vector3(x, 2000, z), downDir);
+  raycaster.far = 4000;
+  const hits = raycaster.intersectObject(tiles.group, true);
+  let topY = 0;
+  for (const h of hits) if (h.point.y > topY) topY = h.point.y;
+  cachedGroundY = topY;
+  return topY;
+}
+
+// ─── Per-frame update ────────────────────────────────────────────────────────
+const clock = new THREE.Clock();
+let downloadedTiles = 0;
+tiles.addEventListener('load-content',   () => downloadedTiles++);
+
+window.__frames = 0;
+window.__lastFrameError = null;
+function update() {
+  try {
+  window.__frames++;
+  const dt = Math.min(clock.getDelta(), 0.05); // clamp to avoid huge steps on tab refocus
+
+  // Compute movement directions from current yaw (XZ plane only)
+  const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+  const right   = new THREE.Vector3(Math.cos(yaw),  0, -Math.sin(yaw));
+
+  const speed = (keys.has('ShiftLeft') || keys.has('ShiftRight')) ? RUN_SPEED : WALK_SPEED;
+  const inputDir = new THREE.Vector3();
+  if (keys.has('KeyW')) inputDir.add(forward);
+  if (keys.has('KeyS')) inputDir.sub(forward);
+  if (keys.has('KeyD')) inputDir.add(right);
+  if (keys.has('KeyA')) inputDir.sub(right);
+  if (inputDir.lengthSq() > 0) inputDir.normalize();
+  targetVel.copy(inputDir).multiplyScalar(speed);
+
+  // Exponential smoothing toward targetVel (frame-rate independent)
+  const k = 1 - Math.exp(-dt / ACCEL_TIME);
+  smoothedVel.lerp(targetVel, k);
+
+  const move = smoothedVel.clone().multiplyScalar(dt);
+  kaiju.position.x += move.x;
+  kaiju.position.z += move.z;
+  isMoving = smoothedVel.lengthSq() > 4; // ignore tiny residual drift
+
+  // Vertical: gravity + ground snap
+  velocity.y += GRAVITY * dt;
+  kaiju.position.y += velocity.y * dt;
+
+  const groundY = groundHeightAt(kaiju.position.x, kaiju.position.z);
+  if (kaiju.position.y <= groundY) {
+    kaiju.position.y = groundY;
+    velocity.y = 0;
+    grounded = true;
+  } else {
+    grounded = false;
+  }
+
+  if (keys.has('Space') && grounded) {
+    velocity.y = JUMP_VELOCITY;
+    grounded = false;
+  }
+
+  // Face the direction we're walking, but smoothly slerp toward the target so
+  // sharp 90° turns don't snap. Local -Z is the kaiju's front in Three convention.
+  if (isMoving) {
+    const targetYaw = Math.atan2(-smoothedVel.x, -smoothedVel.z);
+    // Shortest-arc delta into [-π, π]
+    let delta = targetYaw - kaiju.rotation.y;
+    while (delta >  Math.PI) delta -= Math.PI * 2;
+    while (delta < -Math.PI) delta += Math.PI * 2;
+    kaiju.rotation.y += delta * Math.min(dt * 8, 1);
+  }
+
+  // ── Walk-cycle animation: legs swing, arms counter-swing, tail wags ────────
+  const cadence = (keys.has('ShiftLeft') || keys.has('ShiftRight')) ? 6 : 3.5;
+  if (isMoving) walkCycle += dt * cadence;
+  const s = Math.sin(walkCycle);
+  const c = Math.cos(walkCycle);
+  const swing = isMoving ? 0.6 : 0.0;
+  kaijuParts.legL.hip.rotation.x = -0.05 + s * swing;
+  kaijuParts.legR.hip.rotation.x =  0.05 - s * swing;
+  kaijuParts.legL.knee.rotation.x = 0.3 + Math.max(0, s) * 0.4;
+  kaijuParts.legR.knee.rotation.x = 0.3 + Math.max(0,-s) * 0.4;
+  kaijuParts.armL.shoulder.rotation.x = 0.3 - s * swing * 0.3;
+  kaijuParts.armR.shoulder.rotation.x = 0.3 + s * swing * 0.3;
+  // Tail wags side-to-side, propagating with delay down each segment
+  for (let i = 0; i < kaijuParts.tailSegments.length; i++) {
+    kaijuParts.tailSegments[i].rotation.y = Math.sin(walkCycle * 0.7 - i * 0.6) * 0.18;
+  }
+  // Head bobs slightly while walking
+  kaijuParts.head.rotation.x = isMoving ? Math.abs(s) * 0.05 - 0.05 : -0.05;
+  // Body bob vertically with footfalls
+  kaiju.position.y += isMoving ? Math.abs(s) * 2 : 0;
+
+  // ── Trample check + crumble animation ──────────────────────────────────────
+  if (isMoving && performance.now() - lastTrampleCheck > TRAMPLE_INTERVAL) {
+    lastTrampleCheck = performance.now();
+    kaiju.updateMatrixWorld(true);
+    tryTrample();
+  }
+  updateCrumbling(dt);
+
+  // Camera shake decay (impulses bumped in tryTrample on building hits)
+  shakeImpulse *= Math.pow(0.001, dt); // exponential decay toward 0
+
+  // Third-person camera: orbit a fixed offset around the kaiju, rotated by yaw/pitch
+  const dist = 320;
+  const camPos = new THREE.Vector3(
+    Math.sin(yaw) * Math.cos(pitch) * dist,
+    -Math.sin(pitch) * dist + KAIJU_HEIGHT * 0.4,
+    Math.cos(yaw) * Math.cos(pitch) * dist,
+  );
+  camera.position.copy(kaiju.position).add(camPos);
+  // Camera shake from trample impacts
+  if (shakeImpulse > 0.01) {
+    const sk = shakeImpulse * 6;
+    camera.position.x += (Math.random() - 0.5) * sk;
+    camera.position.y += (Math.random() - 0.5) * sk;
+    camera.position.z += (Math.random() - 0.5) * sk;
+  }
+  camera.lookAt(kaiju.position.x, kaiju.position.y + KAIJU_HEIGHT * 0.7, kaiju.position.z);
+
+  // Drive tile streaming + render
+  tiles.update();
+  renderer.render(scene, camera);
+
+  // Stats readout
+  statsEl.textContent =
+    `pos ${kaiju.position.x.toFixed(0)}, ${kaiju.position.y.toFixed(0)}, ${kaiju.position.z.toFixed(0)}` +
+    `  ·  tiles ${downloadedTiles}` +
+    `  ·  trampled ${trampledCount}`;
+
+  requestAnimationFrame(update);
+  } catch (e) { window.__lastFrameError = { message: e.message, stack: e.stack, frame: window.__frames }; }
+}
+
+update();
+
+// Expose state for debugging from the dev console / preview tools.
+window.__debug = { THREE, scene, camera, renderer, tiles, kaiju };
+
+} catch (err) {
+  const el = document.getElementById('status');
+  if (el) { el.textContent = `crash at "${__step}": ${err.message}`; el.className = 'panel err'; }
+  console.error('[game.html] crash at', __step, err);
+  window.__err = { step: __step, message: err.message, stack: err.stack };
+}
+</script>
+</body>
+</html>

@@ -78,9 +78,10 @@
 </div>
 
 <script>
-  const TILESET_URL = 'https://www.onemap.gov.sg/omapi/tilesets/sg_noterrain_tiles/tileset.json';
-  const BASEMAP_URL = 'https://www.onemap.gov.sg/maps/tiles/Default_HD/{z}/{x}/{y}.png';
-  const SEARCH_URL  = 'https://www.onemap.gov.sg/omapi/ss/search';
+  // Relative paths so serve.mjs proxies them and adds CORS + Referer.
+  const TILESET_URL = '/omapi/tilesets/sg_noterrain_tiles/tileset.json';
+  const BASEMAP_URL = '/maps/tiles/Default_HD/{z}/{x}/{y}.png';
+  const SEARCH_URL  = '/api/common/elastic/search';
 
   // Southern Singapore framing: camera south of Sentosa, looking north over CBD / Marina Bay.
   const VIEWS = {
